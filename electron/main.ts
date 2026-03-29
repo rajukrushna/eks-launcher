@@ -179,7 +179,7 @@ ipcMain.handle('env:delete', (_e, id: number) => {
 function buildProfileSection(env: any): string {
   const kv = (key: string, val: string | number) => `${key} = ${val ?? ''}`
   return [
-    `[${env.okta_profile}]`,
+    `[${env.name}]`,
     kv('okta_org_url',         env.okta_org_url         ?? ''),
     kv('okta_auth_server',     env.okta_auth_server     ?? ''),
     kv('client_id',            env.client_id            ?? ''),
@@ -241,15 +241,15 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
 
     const configPath = path.join(os.homedir(), '.okta_aws_login_config')
     const section = buildProfileSection(env)
-    const original = injectProfile(configPath, env.okta_profile, section)
-    emit(`✎ Injected [${env.okta_profile}] into ${configPath}`, 'stdout')
+    const original = injectProfile(configPath, env.name, section)
+    emit(`✎ Injected [${env.name}] into ${configPath}`, 'stdout')
 
     // On Windows, gimme-aws-creds is typically not on PATH — invoke via Python directly.
     // On Mac/Linux, use a login shell so PATH includes Homebrew/pyenv/pip install locations.
     const isWindows = process.platform === 'win32'
     const oktaCmd = isWindows
-      ? `python -c "from gimme_aws_creds.main import GimmeAWSCreds; GimmeAWSCreds().run()" --profile ${env.okta_profile}`
-      : `gimme-aws-creds --profile ${env.okta_profile}`
+      ? `python -c "from gimme_aws_creds.main import GimmeAWSCreds; GimmeAWSCreds().run()" --profile ${env.name}`
+      : `gimme-aws-creds --profile ${env.name}`
 
     if (isWindows) emit('ℹ Running via Python on Windows', 'stdout')
     emit(`\n$ ${oktaCmd}`, 'cmd')

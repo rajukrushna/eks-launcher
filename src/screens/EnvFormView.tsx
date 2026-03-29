@@ -44,7 +44,7 @@ export default function EnvFormView() {
   const [autoGenCmd, setAutoGenCmd] = React.useState(false)
 
   // Live preview of the config file that will be written
-  const configPreview = `[${form.okta_profile || '<profile>'}]
+  const configPreview = `[${form.name || '<environment_name>'}]
 okta_org_url = ${form.okta_org_url}
 okta_auth_server = ${form.okta_auth_server}
 client_id = ${form.client_id}
@@ -69,9 +69,62 @@ enable_keychain = True`
       ? `aws eks update-kubeconfig --name ${f.eks_cluster_name} --region ${f.aws_region} --profile ${f.aws_profile}`
       : f.eks_command
 
+  const parseOktaConfig = (text: string) => {
+    const lines = text.split('\n')
+    const updated = { ...form }
+    lines.forEach(line => {
+      // Parse section header [environment_name]
+      const sectionMatch = line.match(/^\s*\[(.+?)\]\s*$/)
+      if (sectionMatch) {
+        updated.name = sectionMatch[1]
+        return
+      }
+      
+      // Parse key=value pairs
+      const match = line.match(/^\s*(\w+)\s*=\s*(.*)$/)
+      if (!match) return
+      const [, key, value] = match
+      const trimmedValue = value.trim()
+      
+      switch (key) {
+        case 'okta_org_url': updated.okta_org_url = trimmedValue; break
+        case 'okta_auth_server': updated.okta_auth_server = trimmedValue; break
+        case 'client_id': updated.client_id = trimmedValue; break
+        case 'gimme_creds_server': updated.gimme_creds_server = trimmedValue; break
+        case 'aws_appname': updated.aws_appname = trimmedValue; break
+        case 'aws_rolename': updated.aws_rolename = trimmedValue; break
+        case 'okta_username': updated.okta_username = trimmedValue; break
+        case 'app_url': updated.app_url = trimmedValue; break
+        case 'preferred_mfa_type': updated.preferred_mfa_type = trimmedValue; break
+        case 'aws_default_duration': updated.aws_default_duration = parseInt(trimmedValue) || 3600; break
+        case 'cred_profile': updated.okta_profile = trimmedValue; break
+      }
+    })
+    return updated
+  }
+
+  const parseEksCommand = (cmd: string) => {
+    const updated = { ...form }
+    // Match: aws eks update-kubeconfig --name CLUSTER --region REGION --profile PROFILE
+    const nameMatch = cmd.match(/--name\s+(\S+)/)
+    const regionMatch = cmd.match(/--region\s+(\S+)/)
+    const profileMatch = cmd.match(/--profile\s+(\S+)/)
+    
+    if (nameMatch) updated.eks_cluster_name = nameMatch[1]
+    if (regionMatch) updated.aws_region = regionMatch[1]
+    if (profileMatch) updated.aws_profile = profileMatch[1]
+    
+    return updated
+  }
+
   const handleChange = (field: keyof EnvironmentFormData, value: string | number) => {
-    const updated = { ...form, [field]: value }
-    if (field === 'name' && !form.okta_profile) updated.okta_profile = String(value)
+    let finalValue = value
+    // Remove spaces from name field
+    if (field === 'name' && typeof value === 'string') {
+      finalValue = value.replace(/\s+/g, '-')
+    }
+    const updated = { ...form, [field]: finalValue }
+    if (field === 'name' && !form.okta_profile) updated.okta_profile = String(finalValue)
     if (['eks_cluster_name', 'aws_region', 'aws_profile'].includes(field)) {
       updated.eks_command = buildEksCmd(updated)
       setAutoGenCmd(true)
@@ -83,6 +136,7 @@ enable_keychain = True`
   const validate = () => {
     const e: typeof errors = {}
     if (!form.name.trim())        e.name = 'Required'
+    if (form.name.includes(' '))  e.name = 'Spaces not allowed (use hyphens instead)'
     if (!form.okta_profile.trim()) e.okta_profile = 'Required'
     if (!form.okta_org_url.trim()) e.okta_org_url = 'Required'
     if (!form.eks_command.trim()) e.eks_command = 'Required'
@@ -211,11 +265,16 @@ enable_keychain = True`
             {/* Live config file preview */}
             <div style={{ marginTop: 14 }}>
               <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
-                <FileText size={10} /> Config file preview
+                <FileText size={10} /> Config file (editable)
               </div>
-              <pre style={{ background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 4, padding: '10px 12px', fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--accent-amber)', lineHeight: 1.8, margin: 0, overflowX: 'auto', whiteSpace: 'pre' }}>
-                {configPreview}
-              </pre>
+              <textarea value={configPreview} onChange={e => {
+                setForm(parseOktaConfig(e.target.value))
+                setErrors({})
+              }}
+                rows={11} spellCheck={false}
+                style={{ width: '100%', background: 'var(--bg-input)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: 10, padding: '8px 11px', outline: 'none', resize: 'vertical', lineHeight: 1.6 }}
+                onFocus={e => e.currentTarget.style.borderColor = 'var(--border-active)'}
+                onBlur={e => e.currentTarget.style.borderColor = 'var(--border)'} />
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
                 Written to a temp path and passed via{' '}
                 <code style={{ color: 'var(--accent-green)' }}>gimme-aws-creds --profile {form.okta_profile || '<profile>'} --config &lt;tmpfile&gt;</code>,
@@ -249,7 +308,12 @@ enable_keychain = True`
             }>
             {autoGenCmd && <div style={{ fontSize: 10, color: 'var(--accent-green)', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 4 }}><Zap size={10} /> Generated from cluster / region / profile above</div>}
             <Field label="" error={errors.eks_command}>
-              <textarea value={form.eks_command} onChange={e => { setAutoGenCmd(false); handleChange('eks_command', e.target.value) }}
+              <textarea value={form.eks_command} onChange={e => { 
+                const parsed = parseEksCommand(e.target.value)
+                setForm(parsed)
+                setAutoGenCmd(false)
+                setErrors(err => ({ ...err, eks_command: undefined }))
+              }}
                 rows={2} spellCheck={false}
                 style={{ width: '100%', background: 'var(--bg-input)', border: `1px solid ${errors.eks_command ? 'var(--accent-red)' : 'var(--border)'}`, borderRadius: 4, color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '8px 11px', outline: 'none', resize: 'vertical', lineHeight: 1.6 }}
                 onFocus={e => e.currentTarget.style.borderColor = 'var(--border-active)'}
