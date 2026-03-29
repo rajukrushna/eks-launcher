@@ -56,7 +56,11 @@ export const useStore = create<AppStore>((set) => ({
   runStatus: 'idle',
   logs: [],
   setRunStatus: (runStatus) => set({ runStatus }),
-  appendLog: (entry) => set(s => ({ logs: [...s.logs, entry] })),
+  appendLog: (entry) => set(s => {
+    // SECURITY: Limit log retention to prevent memory exhaustion (keep last 500 lines)
+    const newLogs = [...s.logs, entry].slice(-500)
+    return { logs: newLogs }
+  }),
   clearLogs: () => set({ logs: [] }),
 
   portForwards: [],

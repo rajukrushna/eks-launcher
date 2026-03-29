@@ -102,7 +102,10 @@ function createWindow() {
   })
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
+    // SECURITY: Only open DevTools in development mode when not packaged
+    if (!app.isPackaged) {
+      mainWindow.webContents.openDevTools()
+    }
   } else {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
@@ -133,6 +136,10 @@ ipcMain.handle('env:list', () => db!.prepare('SELECT * FROM environments ORDER B
 ipcMain.handle('env:get',  (_e, id: number) => db!.prepare('SELECT * FROM environments WHERE id = ?').get(id))
 
 ipcMain.handle('env:create', (_e, data: any) => {
+  // SECURITY: Validate input before inserting
+  const nameValidation = validateEnvironmentName(data.name)
+  if (!nameValidation.valid) throw new Error(nameValidation.error)
+  
   const r = db!.prepare(`
     INSERT INTO environments (
       name, okta_profile,
@@ -152,6 +159,10 @@ ipcMain.handle('env:create', (_e, data: any) => {
 })
 
 ipcMain.handle('env:update', (_e, id: number, data: any) => {
+  // SECURITY: Validate input before updating
+  const nameValidation = validateEnvironmentName(data.name)
+  if (!nameValidation.valid) throw new Error(nameValidation.error)
+  
   db!.prepare(`
     UPDATE environments SET
       name=@name, okta_profile=@okta_profile,
@@ -171,6 +182,50 @@ ipcMain.handle('env:delete', (_e, id: number) => {
   db!.prepare('DELETE FROM environments WHERE id = ?').run(id)
   return { success: true }
 })
+
+// ─── Validation & Sanitization ─────────────────────────────────────────────────────
+
+function validateEnvironmentName(name: string): { valid: boolean; error?: string } {
+  if (!name || typeof name !== 'string') return { valid: false, error: 'Name is required' }
+  if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+    return { valid: false, error: 'Only alphanumeric, dash, and underscore allowed' }
+  }
+  if (name.length > 100) return { valid: false, error: 'Name too long (max 100 chars)' }
+  return { valid: true }
+}
+
+function validateCommand(cmd: string): { valid: boolean; error?: string } {
+  if (!cmd || typeof cmd !== 'string') return { valid: false, error: 'Command is required' }
+  // Only allow known safe commands
+  const safeCmdStart = cmd.trim().match(/^(aws|kubectl)/)
+  if (!safeCmdStart) return { valid: false, error: 'Command must start with: aws or kubectl' }
+  return { valid: true }
+}
+
+function sanitizeLog(line: string): string {
+  // Mask AWS credentials (access keys start with AKIA, secret keys with ASIA, etc.)
+  line = line.replace(/AKIA[0-9A-Z]{16}/g, 'AKIA***REDACTED***')
+  line = line.replace(/ASIA[0-9A-Z]{16}/g, 'ASIA***REDACTED***')
+  // Mask session tokens
+  line = line.replace(/(aws_session_token|AWS_SESSION_TOKEN|Token)[=:][\s]*[\S]{20,}/gi, '$1=***REDACTED***')
+  // Mask secret access keys
+  line = line.replace(/(BzxP.{80,}|[A-Z0-9]{20,})/g, (match) => {
+    if (match.length > 40) return '***REDACTED***'
+    return match
+  })
+  return line
+}
+
+function getSafeEnv(): NodeJS.ProcessEnv {
+  // Only pass essential environment variables to child processes
+  return {
+    PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+    HOME: process.env.HOME,
+    USER: process.env.USER,
+    SHELL: process.env.SHELL || '/bin/bash',
+    TERM: process.env.TERM || 'xterm-256color',
+  }
+}
 
 // ─── Okta config helpers ──────────────────────────────────────────────────────
 // gimme-aws-creds has no --config flag — it always reads ~/.okta_aws_login_config
@@ -204,11 +259,14 @@ function buildProfileSection(env: any): string {
 function injectProfile(configPath: string, profileName: string, section: string): string | null {
   let original: string | null = null
 
+  // Escape special regex characters in profileName to prevent regex injection
+  const escapedProfileName = profileName.replace(/[.*+?^$()[\]{}|\\]/g, '\\$&')
+
   if (fs.existsSync(configPath)) {
     original = fs.readFileSync(configPath, 'utf-8')
     // Remove existing section for this profile if present
     const stripped = original.replace(
-      new RegExp(`\\[${profileName}\\][^\\[]*`, 'g'), ''
+      new RegExp(`\\[${escapedProfileName}\\][^\\[]*`, 'g'), ''
     ).trimEnd()
     const updated = stripped ? `${stripped}\n\n${section}\n` : `${section}\n`
     fs.writeFileSync(configPath, updated, { mode: 0o600 })
@@ -231,8 +289,17 @@ function restoreConfig(configPath: string, original: string | null) {
 
 ipcMain.handle('cmd:run', (_e, env: any) => {
   return new Promise((resolve) => {
-    const emit = (line: string, type: string) =>
-      mainWindow?.webContents.send('cmd:log', { line, type })
+    const emit = (line: string, type: string) => {
+      const sanitized = type === 'stdout' || type === 'stderr' ? sanitizeLog(line) : line
+      mainWindow?.webContents.send('cmd:log', { line: sanitized, type })
+    }
+
+    // Validate environment name
+    const nameValidation = validateEnvironmentName(env.name)
+    if (!nameValidation.valid) {
+      emit(`✗ Invalid environment: ${nameValidation.error}`, 'error')
+      return resolve({ success: false })
+    }
 
     if (!env.okta_org_url) {
       emit('✗ No Okta Org URL configured. Edit this environment and fill in the Okta Configuration section.', 'error')
@@ -256,8 +323,9 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
 
     // Use a login shell on Mac/Linux so the full user PATH (Homebrew, pip, pyenv, etc.) is available.
     // Electron GUI apps do not inherit the shell PATH set in ~/.zshrc / ~/.bashrc.
+    // SECURITY: Only pass safe environment variables to child process
     const spawnCmd = isWindows ? oktaCmd : `bash -l 2>/dev/null -c ${JSON.stringify(oktaCmd)}`
-    const okta = spawn(spawnCmd, [], { shell: true, env: { ...process.env } })
+    const okta = spawn(spawnCmd, [], { shell: true, env: getSafeEnv() })
     okta.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
     okta.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
 
@@ -274,10 +342,18 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
       }
 
       emit('✓ AWS credentials obtained', 'success')
+      
+      // Validate EKS command before execution
+      const cmdValidation = validateCommand(env.eks_command)
+      if (!cmdValidation.valid) {
+        emit(`✗ Invalid EKS command: ${cmdValidation.error}`, 'error')
+        return resolve({ success: false })
+      }
+      
       emit(`\n$ ${env.eks_command}`, 'cmd')
 
       const eksSpawnCmd = isWindows ? env.eks_command : `bash -l 2>/dev/null -c ${JSON.stringify(env.eks_command)}`
-      const eks = spawn(eksSpawnCmd, [], { shell: true, env: { ...process.env } })
+      const eks = spawn(eksSpawnCmd, [], { shell: true, env: getSafeEnv() })
       eks.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
       eks.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
       eks.on('close', (eksCode) => {
@@ -301,6 +377,10 @@ ipcMain.handle('okta:read-profiles', () => ({ profiles: [] }))
 ipcMain.handle('pf:list', () => db!.prepare('SELECT * FROM port_forwards ORDER BY group_name ASC, name ASC').all())
 
 ipcMain.handle('pf:create', (_e, data: any) => {
+  // SECURITY: Validate command before inserting
+  const cmdValidation = validateCommand(data.command)
+  if (!cmdValidation.valid) throw new Error(`Invalid command: ${cmdValidation.error}`)
+  
   const r = db!.prepare(`
     INSERT INTO port_forwards (name, group_name, namespace, service, local_port, remote_port, command)
     VALUES (@name, @group_name, @namespace, @service, @local_port, @remote_port, @command)
@@ -309,6 +389,10 @@ ipcMain.handle('pf:create', (_e, data: any) => {
 })
 
 ipcMain.handle('pf:update', (_e, id: number, data: any) => {
+  // SECURITY: Validate command before updating
+  const cmdValidation = validateCommand(data.command)
+  if (!cmdValidation.valid) throw new Error(`Invalid command: ${cmdValidation.error}`)
+  
   db!.prepare(`
     UPDATE port_forwards SET
       name=@name, group_name=@group_name, namespace=@namespace,
@@ -331,10 +415,21 @@ ipcMain.handle('pf:start', (_e, pf: any) => {
   const existing = pfProcesses.get(pf.id)
   if (existing) { existing.kill(); pfProcesses.delete(pf.id) }
 
-  const emit    = (line: string, type: string) => mainWindow?.webContents.send('pf:log',    { id: pf.id, line, type })
+  // Validate port-forward command
+  const cmdValidation = validateCommand(pf.command)
+  if (!cmdValidation.valid) {
+    mainWindow?.webContents.send('pf:log', { id: pf.id, line: `✗ Invalid command: ${cmdValidation.error}`, type: 'error' })
+    mainWindow?.webContents.send('pf:status', { id: pf.id, status: 'error' })
+    return { success: false, error: cmdValidation.error }
+  }
+
+  const emit    = (line: string, type: string) => {
+    const sanitized = type === 'stdout' || type === 'stderr' ? sanitizeLog(line) : line
+    mainWindow?.webContents.send('pf:log', { id: pf.id, line: sanitized, type })
+  }
   const emitSts = (status: string)             => mainWindow?.webContents.send('pf:status', { id: pf.id, status })
 
-  const proc = spawn(pf.command, [], { shell: true, env: { ...process.env } })
+  const proc = spawn(pf.command, [], { shell: true, env: getSafeEnv() })
   pfProcesses.set(pf.id, proc)
   emitSts('running')
   emit(`$ ${pf.command}`, 'cmd')
@@ -346,10 +441,12 @@ ipcMain.handle('pf:start', (_e, pf: any) => {
     if (code === 0 || code === null) { emitSts('stopped'); emit('Process exited', 'stdout') }
     else { emitSts('error'); emit(`Process exited with code ${code}`, 'error') }
   })
-  proc.on('error', (err) => {
+  proc.on('error', (err: any) => {
     pfProcesses.delete(pf.id)
     emitSts('error')
-    emit(`Error: ${err.message}`, 'error')
+    // Sanitize error messages to avoid leaking system information
+    const safeMsg = err.code === 'ENOENT' ? 'Command not found' : 'Failed to start process'
+    emit(`Error: ${safeMsg}`, 'error')
   })
 
   return { success: true }
@@ -405,14 +502,25 @@ ipcMain.handle('data:import', async () => {
 
     if (!filePaths.length) return { success: false }
 
-    const data = JSON.parse(fs.readFileSync(filePaths[0], 'utf-8'))
+    const fileContent = fs.readFileSync(filePaths[0], 'utf-8')
+    const data = JSON.parse(fileContent)
     
-    if (!data.environments || !data.portForwards) {
+    if (!data.environments || !data.portForwards || !Array.isArray(data.environments) || !Array.isArray(data.portForwards)) {
       return { success: false, error: 'Invalid backup format' }
     }
 
+    // SECURITY: Limit import size to prevent DoS
+    if (data.environments.length > 1000 || data.portForwards.length > 1000) {
+      return { success: false, error: 'Import file too large' }
+    }
+
     // Import environments
+    let importedEnvs = 0
     for (const env of data.environments) {
+      // SECURITY: Validate each environment before importing
+      const nameValidation = validateEnvironmentName(env.name)
+      if (!nameValidation.valid) continue // Skip invalid entries
+      
       const { id, created_at, updated_at, ...envData } = env
       try {
         db!.prepare(`
@@ -428,13 +536,19 @@ ipcMain.handle('data:import', async () => {
             @aws_profile, @eks_command
           )
         `).run(envData)
+        importedEnvs++
       } catch (e) {
         // Skip if environment already exists
       }
     }
 
     // Import port forwards
+    let importedPfs = 0
     for (const pf of data.portForwards) {
+      // SECURITY: Validate each command before importing
+      const cmdValidation = validateCommand(pf.command)
+      if (!cmdValidation.valid) continue // Skip invalid entries
+      
       const { id, created_at, updated_at, ...pfData } = pf
       try {
         db!.prepare(`
@@ -444,13 +558,14 @@ ipcMain.handle('data:import', async () => {
             @name, @group_name, @namespace, @service, @local_port, @remote_port, @command
           )
         `).run(pfData)
+        importedPfs++
       } catch (e) {
         // Skip if port forward already exists
       }
     }
 
-    return { success: true, imported: { envCount: data.environments.length, pfCount: data.portForwards.length } }
+    return { success: true, imported: { envCount: importedEnvs, pfCount: importedPfs } }
   } catch (err: any) {
-    return { success: false, error: err.message }
+    return { success: false, error: 'Failed to import backup file' }
   }
 })
