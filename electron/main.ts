@@ -245,7 +245,7 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
     emit(`✎ Injected [${env.okta_profile}] into ${configPath}`, 'stdout')
 
     // On Windows, gimme-aws-creds is typically not on PATH — invoke via Python directly.
-    // On Mac/Linux use the gimme-aws-creds binary directly.
+    // On Mac/Linux, use a login shell so PATH includes Homebrew/pyenv/pip install locations.
     const isWindows = process.platform === 'win32'
     const oktaCmd = isWindows
       ? `python -c "from gimme_aws_creds.main import GimmeAWSCreds; GimmeAWSCreds().run()" --profile ${env.okta_profile}`
@@ -254,7 +254,10 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
     if (isWindows) emit('ℹ Running via Python on Windows', 'stdout')
     emit(`\n$ ${oktaCmd}`, 'cmd')
 
-    const okta = spawn(oktaCmd, [], { shell: true, env: { ...process.env } })
+    // Use a login shell on Mac/Linux so the full user PATH (Homebrew, pip, pyenv, etc.) is available.
+    // Electron GUI apps do not inherit the shell PATH set in ~/.zshrc / ~/.bashrc.
+    const spawnCmd = isWindows ? oktaCmd : `bash -l -c ${JSON.stringify(oktaCmd)}`
+    const okta = spawn(spawnCmd, [], { shell: isWindows, env: { ...process.env } })
     okta.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
     okta.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
 
@@ -273,7 +276,8 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
       emit('✓ AWS credentials obtained', 'success')
       emit(`\n$ ${env.eks_command}`, 'cmd')
 
-      const eks = spawn(env.eks_command, [], { shell: true, env: { ...process.env } })
+      const eksSpawnCmd = isWindows ? env.eks_command : `bash -l -c ${JSON.stringify(env.eks_command)}`
+      const eks = spawn(eksSpawnCmd, [], { shell: isWindows, env: { ...process.env } })
       eks.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
       eks.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
       eks.on('close', (eksCode) => {
