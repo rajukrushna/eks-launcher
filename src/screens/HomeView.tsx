@@ -1,10 +1,12 @@
 import React from 'react'
-import { Play, Server, Key, Globe, Terminal, CheckCircle, XCircle, Loader, Network } from 'lucide-react'
+import { Play, Server, Key, Globe, Terminal, CheckCircle, XCircle, Loader, Network, Download, Upload } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { LogEntry } from '../types'
 
 export default function HomeView() {
-  const { selectedEnv, runStatus, setRunStatus, logs, appendLog, clearLogs, mainTab, setMainTab, runStatus: rs } = useStore()
+  const { selectedEnv, runStatus, setRunStatus, logs, appendLog, clearLogs, mainTab, setMainTab, runStatus: rs, setEnvironments, setPortForwards } = useStore()
+  const [exporting, setExporting] = React.useState(false)
+  const [importing, setImporting] = React.useState(false)
   const logRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
@@ -27,6 +29,39 @@ export default function HomeView() {
     setRunStatus(result.success ? 'success' : 'error')
   }
 
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const result = await window.api.data.export()
+      if (result.success) {
+        alert(`Data exported successfully to ${result.filePath}`)
+      } else {
+        alert(`Export failed: ${result.error}`)
+      }
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleImport = async () => {
+    setImporting(true)
+    try {
+      const result = await window.api.data.import()
+      if (result.success) {
+        // Refresh the data
+        const envs = await window.api.env.list()
+        const pfs = await window.api.pf.list()
+        setEnvironments(envs)
+        setPortForwards(pfs)
+        alert(`Import successful! Added ${result.imported.envCount} environments and ${result.imported.pfCount} port-forwards.`)
+      } else {
+        alert(`Import failed: ${result.error}`)
+      }
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const logColor = (type: string) => {
     switch (type) {
       case 'cmd': return 'var(--accent-amber)'
@@ -46,13 +81,30 @@ export default function HomeView() {
 
   if (!selectedEnv) {
     return (
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, color: 'var(--text-muted)' }}>
-        <div style={{ width: 60, height: 60, borderRadius: 14, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Server size={26} strokeWidth={1} />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="animate-fade">
+        {/* Toolbar */}
+        <div style={{ padding: '10px 22px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)', display: 'flex', gap: 8, flexShrink: 0, justifyContent: 'flex-end' }}>
+          <button onClick={handleExport} disabled={exporting}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-blue)'; e.currentTarget.style.color = '#0d0f12' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent-blue)' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-blue)', borderRadius: 4, background: 'transparent', color: 'var(--accent-blue)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: exporting ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: exporting ? 0.5 : 1 }}>
+            <Download size={11} /> Export
+          </button>
+          <button onClick={handleImport} disabled={importing}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-amber)'; e.currentTarget.style.color = '#0d0f12' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent-amber)' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-amber)', borderRadius: 4, background: 'transparent', color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: importing ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: importing ? 0.5 : 1 }}>
+            <Upload size={11} /> Import
+          </button>
         </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>No environment selected</div>
-          <div style={{ fontSize: 12 }}>Choose one from the sidebar or create a new one</div>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, color: 'var(--text-muted)' }}>
+          <div style={{ width: 60, height: 60, borderRadius: 14, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Server size={26} strokeWidth={1} />
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>No environment selected</div>
+            <div style={{ fontSize: 12 }}>Choose one from the sidebar or create a new one</div>
+          </div>
         </div>
       </div>
     )
@@ -60,7 +112,21 @@ export default function HomeView() {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }} className="animate-fade">
-      {/* Header */}
+      {/* Toolbar */}
+      <div style={{ padding: '10px 22px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)', display: 'flex', gap: 8, flexShrink: 0, justifyContent: 'flex-end' }}>
+        <button onClick={handleExport} disabled={exporting}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-blue)'; e.currentTarget.style.color = '#0d0f12' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent-blue)' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-blue)', borderRadius: 4, background: 'transparent', color: 'var(--accent-blue)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: exporting ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: exporting ? 0.5 : 1 }}>
+          <Download size={11} /> Export
+        </button>
+        <button onClick={handleImport} disabled={importing}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-amber)'; e.currentTarget.style.color = '#0d0f12' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent-amber)' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-amber)', borderRadius: 4, background: 'transparent', color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: importing ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: importing ? 0.5 : 1 }}>
+          <Upload size={11} /> Import
+        </button>
+      </div>
       <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 }}>
           <div>

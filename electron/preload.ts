@@ -47,4 +47,9 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('pf:status', h)
     },
   },
+
+  data: {
+    export: () => ipcRenderer.invoke('data:export'),
+    import: () => ipcRenderer.invoke('data:import'),
+  },
 })

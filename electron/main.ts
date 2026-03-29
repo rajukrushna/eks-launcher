@@ -366,3 +366,91 @@ ipcMain.handle('pf:stopAll', () => {
   pfProcesses.clear()
   return { success: true }
 })
+
+// ─── Import/Export ────────────────────────────────────────────────────────────
+
+ipcMain.handle('data:export', async () => {
+  try {
+    const environments = db!.prepare('SELECT * FROM environments ORDER BY name ASC').all()
+    const portForwards = db!.prepare('SELECT * FROM port_forwards ORDER BY name ASC').all()
+    
+    const data = {
+      version: '1.0',
+      exportedAt: new Date().toISOString(),
+      environments,
+      portForwards,
+    }
+
+    const { filePath } = await require('electron').dialog.showSaveDialog(mainWindow!, {
+      defaultPath: `eks-launcher-backup-${new Date().toISOString().split('T')[0]}.json`,
+      filters: [{ name: 'JSON Files', extensions: ['json'] }],
+    })
+
+    if (filePath) {
+      fs.writeFileSync(filePath, JSON.stringify(data, null, 2))
+      return { success: true, filePath }
+    }
+    return { success: false }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('data:import', async () => {
+  try {
+    const { filePaths } = await require('electron').dialog.showOpenDialog(mainWindow!, {
+      filters: [{ name: 'JSON Files', extensions: ['json'] }],
+      properties: ['openFile'],
+    })
+
+    if (!filePaths.length) return { success: false }
+
+    const data = JSON.parse(fs.readFileSync(filePaths[0], 'utf-8'))
+    
+    if (!data.environments || !data.portForwards) {
+      return { success: false, error: 'Invalid backup format' }
+    }
+
+    // Import environments
+    for (const env of data.environments) {
+      const { id, created_at, updated_at, ...envData } = env
+      try {
+        db!.prepare(`
+          INSERT INTO environments (
+            name, okta_profile, okta_org_url, okta_auth_server, client_id,
+            gimme_creds_server, aws_appname, aws_rolename, okta_username, app_url,
+            preferred_mfa_type, aws_default_duration, eks_cluster_name, aws_region,
+            aws_profile, eks_command
+          ) VALUES (
+            @name, @okta_profile, @okta_org_url, @okta_auth_server, @client_id,
+            @gimme_creds_server, @aws_appname, @aws_rolename, @okta_username, @app_url,
+            @preferred_mfa_type, @aws_default_duration, @eks_cluster_name, @aws_region,
+            @aws_profile, @eks_command
+          )
+        `).run(envData)
+      } catch (e) {
+        // Skip if environment already exists
+      }
+    }
+
+    // Import port forwards
+    for (const pf of data.portForwards) {
+      const { id, created_at, updated_at, ...pfData } = pf
+      try {
+        db!.prepare(`
+          INSERT INTO port_forwards (
+            name, group_name, namespace, service, local_port, remote_port, command
+          ) VALUES (
+            @name, @group_name, @namespace, @service, @local_port, @remote_port, @command
+          )
+        `).run(pfData)
+      } catch (e) {
+        // Skip if port forward already exists
+      }
+    }
+
+    return { success: true, imported: { envCount: data.environments.length, pfCount: data.portForwards.length } }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
