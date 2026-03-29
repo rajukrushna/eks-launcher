@@ -1,5 +1,5 @@
 import React from 'react'
-import { Play, Square, StopCircle, Plus, Pencil, Trash2, Settings, ChevronDown, ChevronRight, Activity } from 'lucide-react'
+import { Play, Square, StopCircle, Plus, Pencil, Trash2, Settings, ChevronDown, ChevronRight, Activity, Check } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { PortForward } from '../types'
 
@@ -20,6 +20,7 @@ export default function PortForwardView() {
   const [expandedId, setExpandedId] = React.useState<number | null>(null)
   const [collapsedGroups, setCollapsedGroups] = React.useState<Set<string>>(new Set())
   const [confirmDel, setConfirmDel] = React.useState<number | null>(null)
+  const [selected, setSelected] = React.useState<Set<number>>(new Set())
   const logRefs = React.useRef<Record<number, HTMLDivElement>>({})
 
   // Subscribe to log + status streams from main process
@@ -62,6 +63,32 @@ export default function PortForwardView() {
     }
   }
 
+  const startSelected = async () => {
+    for (const pf of portForwards) {
+      if (selected.has(pf.id)) {
+        const proc = pfProcesses[pf.id]
+        if (!proc || proc.status !== 'running') await start(pf)
+      }
+    }
+    setSelected(new Set())
+  }
+
+  const toggleSelection = (id: number) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selected.size === portForwards.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(portForwards.map(pf => pf.id)))
+    }
+  }
+
   const handleDelete = async (e: React.MouseEvent, pf: PortForward) => {
     e.stopPropagation()
     if (confirmDel === pf.id) {
@@ -101,7 +128,16 @@ export default function PortForwardView() {
           </span>
         </div>
 
+        {selected.size > 0 && (
+          <span style={{ fontSize: 11, color: 'var(--accent-blue)', fontFamily: 'var(--font-mono)', marginLeft: 4 }}>
+            {selected.size} selected
+          </span>
+        )}
+
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          {selected.size > 0 && (
+            <Btn onClick={startSelected} color="var(--accent-green)" icon={<Play size={11} fill="currentColor" />}>Start Selected</Btn>
+          )}
           <Btn onClick={startAll} color="var(--accent-green)" icon={<Play size={11} fill="currentColor" />}>Start All</Btn>
           <Btn onClick={stopAll} color="var(--accent-red)" icon={<StopCircle size={11} />}>Stop All</Btn>
           <Btn onClick={() => setView('pf-manage')} color="var(--text-secondary)" icon={<Settings size={11} />}>Manage</Btn>
@@ -134,24 +170,35 @@ export default function PortForwardView() {
                 return (
                   <div key={pf.id} style={{ margin: '1px 12px', borderRadius: 5, border: `1px solid ${isRunning ? 'rgba(57,217,138,0.2)' : 'var(--border)'}`, background: isExpanded ? 'var(--bg-card)' : 'transparent', transition: 'border-color 0.2s' }}>
                     {/* Row */}
-                    <div onClick={() => setExpandedId(isExpanded ? null : pf.id)}
-                      style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
-                      {/* Status dot */}
-                      <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: STATUS_COLOR[status], animation: isRunning ? 'pulse-dot 1.5s ease-in-out infinite' : 'none', boxShadow: isRunning ? `0 0 5px var(--accent-green)` : 'none' }} />
+                    <div style={{ padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                      {/* Checkbox */}
+                      <input
+                        type="checkbox"
+                        checked={selected.has(pf.id)}
+                        onChange={() => toggleSelection(pf.id)}
+                        style={{ width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+                        onClick={e => e.stopPropagation()}
+                      />
 
-                      {/* Name + ports */}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: isRunning ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pf.name}</span>
-                          <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{pf.namespace}</span>
+                      {/* Status dot + Name + ports */}
+                      <div onClick={() => setExpandedId(isExpanded ? null : pf.id)} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                        {/* Status dot */}
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: STATUS_COLOR[status], animation: isRunning ? 'pulse-dot 1.5s ease-in-out infinite' : 'none', boxShadow: isRunning ? `0 0 5px var(--accent-green)` : 'none' }} />
+
+                        {/* Name + namespace */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: isRunning ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pf.name}</span>
+                            <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{pf.namespace}</span>
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Port badge */}
-                      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: isRunning ? 'var(--accent-green)' : 'var(--text-muted)', background: isRunning ? 'var(--accent-green-dim)' : 'rgba(255,255,255,0.05)', padding: '2px 7px', borderRadius: 3 }}>
-                          :{pf.local_port}→:{pf.remote_port}
-                        </span>
+                        {/* Port badge */}
+                        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: isRunning ? 'var(--accent-green)' : 'var(--text-muted)', background: isRunning ? 'var(--accent-green-dim)' : 'rgba(255,255,255,0.05)', padding: '2px 7px', borderRadius: 3 }}>
+                            :{pf.local_port}→:{pf.remote_port}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Actions */}

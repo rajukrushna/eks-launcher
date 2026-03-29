@@ -256,8 +256,8 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
 
     // Use a login shell on Mac/Linux so the full user PATH (Homebrew, pip, pyenv, etc.) is available.
     // Electron GUI apps do not inherit the shell PATH set in ~/.zshrc / ~/.bashrc.
-    const spawnCmd = isWindows ? oktaCmd : `bash -l -c ${JSON.stringify(oktaCmd)}`
-    const okta = spawn(spawnCmd, [], { shell: isWindows, env: { ...process.env } })
+    const spawnCmd = isWindows ? oktaCmd : `bash -l 2>/dev/null -c ${JSON.stringify(oktaCmd)}`
+    const okta = spawn(spawnCmd, [], { shell: true, env: { ...process.env } })
     okta.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
     okta.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
 
@@ -276,8 +276,8 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
       emit('✓ AWS credentials obtained', 'success')
       emit(`\n$ ${env.eks_command}`, 'cmd')
 
-      const eksSpawnCmd = isWindows ? env.eks_command : `bash -l -c ${JSON.stringify(env.eks_command)}`
-      const eks = spawn(eksSpawnCmd, [], { shell: isWindows, env: { ...process.env } })
+      const eksSpawnCmd = isWindows ? env.eks_command : `bash -l 2>/dev/null -c ${JSON.stringify(env.eks_command)}`
+      const eks = spawn(eksSpawnCmd, [], { shell: true, env: { ...process.env } })
       eks.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
       eks.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
       eks.on('close', (eksCode) => {
