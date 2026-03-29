@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore'
 import type { LogEntry } from '../types'
 
 export default function HomeView() {
-  const { selectedEnv, runStatus, setRunStatus, logs, appendLog, clearLogs, mainTab, setMainTab, runStatus: rs, setEnvironments, setPortForwards } = useStore()
+  const { selectedEnv, connectedEnvId, lastAttemptedEnvId, runStatus, setRunStatus, setLastAttemptedEnvId, logs, appendLog, clearLogs, mainTab, setMainTab, runStatus: rs, setEnvironments, setPortForwards } = useStore()
   const [exporting, setExporting] = React.useState(false)
   const [importing, setImporting] = React.useState(false)
   const logRef = React.useRef<HTMLDivElement>(null)
@@ -23,10 +23,14 @@ export default function HomeView() {
   const handleRun = async () => {
     if (!selectedEnv || runStatus === 'running') return
     clearLogs()
+    setLastAttemptedEnvId(selectedEnv.id)
     setRunStatus('running')
     appendLog({ line: `▶ Connecting to ${selectedEnv.name}...`, type: 'cmd', ts: Date.now() })
     const result = await window.api.cmd.run(selectedEnv)
     setRunStatus(result.success ? 'success' : 'error')
+    if (result.success) {
+      useStore.setState({ connectedEnvId: selectedEnv.id })
+    }
   }
 
   const handleExport = async () => {
@@ -73,9 +77,9 @@ export default function HomeView() {
   }
 
   const badge = (() => {
-    if (runStatus === 'running') return { icon: <Loader size={12} style={{ animation: 'spin 1s linear infinite' }} />, label: 'Connecting...', color: 'var(--accent-amber)' }
-    if (runStatus === 'success') return { icon: <CheckCircle size={12} />, label: 'Connected', color: 'var(--accent-green)' }
-    if (runStatus === 'error')   return { icon: <XCircle size={12} />, label: 'Failed', color: 'var(--accent-red)' }
+    if (runStatus === 'running' && lastAttemptedEnvId === selectedEnv?.id) return { icon: <Loader size={12} style={{ animation: 'spin 1s linear infinite' }} />, label: 'Connecting...', color: 'var(--accent-amber)' }
+    if (connectedEnvId === selectedEnv?.id) return { icon: <CheckCircle size={12} />, label: 'Connected', color: 'var(--accent-green)' }
+    if (runStatus === 'error' && lastAttemptedEnvId === selectedEnv?.id) return { icon: <XCircle size={12} />, label: 'Failed', color: 'var(--accent-red)' }
     return null
   })()
 
@@ -168,30 +172,44 @@ export default function HomeView() {
       {/* Tab: Connect — EKS command + terminal */}
       {mainTab === 'connect' && (
         <>
-          <div style={{ padding: '10px 22px', borderBottom: '1px solid var(--border)', background: 'var(--bg-base)', flexShrink: 0 }}>
-            <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 5 }}>EKS Command</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent-amber)', background: 'var(--bg-card)', padding: '7px 11px', borderRadius: 4, border: '1px solid var(--border)', overflowX: 'auto', whiteSpace: 'nowrap' }}>
-              $ {selectedEnv.eks_command}
+          {selectedEnv.id !== connectedEnvId ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, color: 'var(--text-muted)' }}>
+              <div style={{ width: 56, height: 56, borderRadius: 14, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Terminal size={24} strokeWidth={1} />
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>Not connected</div>
+                <div style={{ fontSize: 12 }}>Connect to {selectedEnv.name} to see command output</div>
+              </div>
             </div>
-          </div>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '8px 22px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
-              <Terminal size={11} color="var(--text-muted)" />
-              <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Output</span>
-              {logs.length > 0 && <button onClick={clearLogs} style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>clear</button>}
-            </div>
-            <div ref={logRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 22px', fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.75, background: 'var(--bg-base)' }}>
-              {logs.length === 0
-                ? <div style={{ color: 'var(--text-muted)', fontSize: 11 }}><span style={{ opacity: 0.4 }}>~/eks-launcher</span> <span style={{ color: 'var(--accent-green)' }}>$</span> <span style={{ opacity: 0.3 }}>waiting...</span></div>
-                : logs.map((e, i) => <div key={i} style={{ color: logColor(e.type), whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{e.line}</div>)
-              }
-            </div>
-          </div>
+          ) : (
+            <>
+              <div style={{ padding: '10px 22px', borderBottom: '1px solid var(--border)', background: 'var(--bg-base)', flexShrink: 0 }}>
+                <div style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 5 }}>EKS Command</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent-amber)', background: 'var(--bg-card)', padding: '7px 11px', borderRadius: 4, border: '1px solid var(--border)', overflowX: 'auto', whiteSpace: 'nowrap' }}>
+                  $ {selectedEnv.eks_command}
+                </div>
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div style={{ padding: '8px 22px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
+                  <Terminal size={11} color="var(--text-muted)" />
+                  <span style={{ fontSize: 9, color: 'var(--text-muted)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Output</span>
+                  {logs.length > 0 && <button onClick={clearLogs} style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'var(--font-mono)' }}>clear</button>}
+                </div>
+                <div ref={logRef} style={{ flex: 1, overflowY: 'auto', padding: '14px 22px', fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.75, background: 'var(--bg-base)' }}>
+                  {logs.length === 0
+                    ? <div style={{ color: 'var(--text-muted)', fontSize: 11 }}><span style={{ opacity: 0.4 }}>~/eks-launcher</span> <span style={{ color: 'var(--accent-green)' }}>$</span> <span style={{ opacity: 0.3 }}>waiting...</span></div>
+                    : logs.map((e, i) => <div key={i} style={{ color: logColor(e.type), whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{e.line}</div>)
+                  }
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
 
       {/* Tab: Port Forwards — redirect to PF view */}
-      {mainTab === 'portforward' && <PortForwardTab connected={runStatus === 'success'} />}
+      {mainTab === 'portforward' && <PortForwardTab connected={connectedEnvId === selectedEnv.id} />}
     </div>
   )
 }

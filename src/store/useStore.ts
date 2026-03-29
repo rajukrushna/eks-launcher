@@ -5,8 +5,12 @@ interface AppStore {
   // Environments
   environments: Environment[]
   selectedEnv: Environment | null
+  connectedEnvId: number | null // Which environment is currently connected
+  lastAttemptedEnvId: number | null // Which environment we last tried to connect to
   setEnvironments: (envs: Environment[]) => void
   setSelectedEnv: (env: Environment | null) => void
+  setConnectedEnvId: (id: number | null) => void
+  setLastAttemptedEnvId: (id: number | null) => void
   addEnvironment: (env: Environment) => void
   updateEnvironment: (env: Environment) => void
   removeEnvironment: (id: number) => void
@@ -44,13 +48,19 @@ interface AppStore {
 export const useStore = create<AppStore>((set) => ({
   environments: [],
   selectedEnv: null,
+  connectedEnvId: null,
+  lastAttemptedEnvId: null,
   setEnvironments: (environments) => set({ environments }),
   setSelectedEnv: (selectedEnv) => set({ selectedEnv }),
+  setConnectedEnvId: (connectedEnvId) => set({ connectedEnvId }),
+  setLastAttemptedEnvId: (lastAttemptedEnvId) => set({ lastAttemptedEnvId }),
   addEnvironment: (env) => set(s => ({ environments: [...s.environments, env].sort((a, b) => a.name.localeCompare(b.name)) })),
   updateEnvironment: (env) => set(s => ({ environments: s.environments.map(e => e.id === env.id ? env : e) })),
   removeEnvironment: (id) => set(s => ({
     environments: s.environments.filter(e => e.id !== id),
     selectedEnv: s.selectedEnv?.id === id ? null : s.selectedEnv,
+    connectedEnvId: s.connectedEnvId === id ? null : s.connectedEnvId,
+    lastAttemptedEnvId: s.lastAttemptedEnvId === id ? null : s.lastAttemptedEnvId,
   })),
 
   runStatus: 'idle',

@@ -11,7 +11,7 @@ function envTier(name: string) {
 }
 
 export default function Sidebar() {
-  const { environments, selectedEnv, setSelectedEnv, setView, removeEnvironment, runStatus } = useStore()
+  const { environments, selectedEnv, connectedEnvId, setSelectedEnv, setView, removeEnvironment, runStatus } = useStore()
   const [hovId, setHovId] = React.useState<number | null>(null)
   const [confirmDel, setConfirmDel] = React.useState<number | null>(null)
 
@@ -61,6 +61,7 @@ export default function Sidebar() {
         )}
         {environments.map((env, i) => {
           const isSelected = selectedEnv?.id === env.id
+          const isConnected = connectedEnvId === env.id
           const isHov = hovId === env.id
           const tag = envTier(env.name)
           const isRunning = runStatus === 'running' && isSelected
@@ -71,7 +72,7 @@ export default function Sidebar() {
               style={{ animationDelay: `${i * 25}ms`, margin: '1px 7px', padding: '9px 10px', borderRadius: 5, background: isSelected ? 'var(--bg-elevated)' : isHov ? 'rgba(255,255,255,0.03)' : 'transparent', border: `1px solid ${isSelected ? 'var(--border-active)' : 'transparent'}`, cursor: 'pointer', transition: 'all 0.15s', display: 'flex', alignItems: 'center', gap: 9 }}>
 
               {/* Status dot */}
-              <div style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: isRunning ? 'var(--accent-amber)' : isSelected ? 'var(--accent-green)' : 'var(--text-muted)', animation: isRunning ? 'pulse-dot 1s ease-in-out infinite' : 'none', boxShadow: isSelected && !isRunning ? '0 0 5px var(--accent-green)' : 'none' }} />
+              <div style={{ width: 6, height: 6, borderRadius: '50%', flexShrink: 0, background: isRunning ? 'var(--accent-amber)' : isConnected ? 'var(--accent-green)' : 'var(--text-muted)', animation: isRunning ? 'pulse-dot 1s ease-in-out infinite' : 'none', boxShadow: isConnected && !isRunning ? '0 0 5px var(--accent-green)' : 'none' }} />
 
               {/* Name + cluster */}
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -108,7 +109,8 @@ export default function Sidebar() {
                 ) : (
                   <span style={{ fontSize: 9, letterSpacing: '0.08em', color: tag.color, background: tag.bg, padding: '2px 5px', borderRadius: 3, fontWeight: 600 }}>{tag.label}</span>
                 )}
-                {isSelected && <ChevronRight size={11} color="var(--text-muted)" />}
+                {isSelected && !isConnected && <ChevronRight size={11} color="var(--text-muted)" />}
+                {isConnected && <span style={{ fontSize: 9, letterSpacing: '0.08em', color: 'var(--accent-green)', fontWeight: 600 }}>●</span>}
               </div>
             </div>
           )
