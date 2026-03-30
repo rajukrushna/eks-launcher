@@ -1,6 +1,6 @@
 {
   "name": "eks-launcher",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "EKS Environment Launcher — manage Okta + EKS configs and port-forwards in one click",
   "main": "dist-electron/main.js",
   "author": {
