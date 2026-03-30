@@ -18,7 +18,7 @@ export default function HomeView() {
       appendLog({ line: data.line, type: data.type as LogEntry['type'], ts: Date.now() })
     })
     return unsub
-  }, [appendLog])
+  }, [])
 
   const handleRun = async () => {
     if (!selectedEnv || runStatus === 'running') return
@@ -172,7 +172,7 @@ export default function HomeView() {
       {/* Tab: Connect — EKS command + terminal */}
       {mainTab === 'connect' && (
         <>
-          {selectedEnv.id !== connectedEnvId ? (
+          {selectedEnv.id !== connectedEnvId && runStatus !== 'running' ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, color: 'var(--text-muted)' }}>
               <div style={{ width: 56, height: 56, borderRadius: 14, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Terminal size={24} strokeWidth={1} />
