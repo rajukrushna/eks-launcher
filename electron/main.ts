@@ -102,7 +102,6 @@ function createWindow() {
   })
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173')
-    // SECURITY: Only open DevTools in development mode when not packaged
     if (!app.isPackaged) {
       mainWindow.webContents.openDevTools()
     }
@@ -216,15 +215,49 @@ function sanitizeLog(line: string): string {
   return line
 }
 
+/** Prepends common install locations so CLIs resolve even before a login shell runs. */
+function augmentPathForCliTools(): string {
+  const home = os.homedir()
+  const extra = [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    path.join(home, '.local', 'bin'),
+    path.join(home, '.pyenv', 'shims'),
+  ]
+  const base = process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin'
+  const parts = [...extra, ...base.split(path.delimiter)].filter((p): p is string => Boolean(p?.trim()))
+  return [...new Set(parts)].join(path.delimiter)
+}
+
+/**
+ * macOS GUI apps (and packaged Electron) often have a minimal PATH. A login shell loads
+ * ~/.zprofile / ~/.zshrc (zsh) or ~/.profile (bash). Using bash on a zsh-only Mac skips
+ * Homebrew/pyenv PATH from ~/.zshrc — gimme-aws-creds / aws / kubectl then fail.
+ */
+function getUnixLoginShell(): string {
+  const s = process.env.SHELL
+  if (s && fs.existsSync(s)) return s
+  return process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash'
+}
+
+function wrapUnixLoginShell(innerCmd: string): string {
+  const sh = getUnixLoginShell()
+  return `${JSON.stringify(sh)} -l -c ${JSON.stringify(innerCmd)}`
+}
+
 function getSafeEnv(): NodeJS.ProcessEnv {
-  // Only pass essential environment variables to child processes
-  return {
-    PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
-    HOME: process.env.HOME,
-    USER: process.env.USER,
-    SHELL: process.env.SHELL || '/bin/bash',
+  const home = process.env.HOME || os.homedir()
+  const env: NodeJS.ProcessEnv = {
+    PATH: augmentPathForCliTools(),
+    HOME: home,
+    USER: process.env.USER || os.userInfo().username,
+    SHELL: process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash'),
     TERM: process.env.TERM || 'xterm-256color',
+    TMPDIR: process.env.TMPDIR || os.tmpdir(),
+    LANG: process.env.LANG || 'en_US.UTF-8',
   }
+  if (process.env.LC_ALL) env.LC_ALL = process.env.LC_ALL
+  return env
 }
 
 // ─── Okta config helpers ──────────────────────────────────────────────────────
@@ -289,6 +322,13 @@ function restoreConfig(configPath: string, original: string | null) {
 
 ipcMain.handle('cmd:run', (_e, env: any) => {
   return new Promise((resolve) => {
+    let settled = false
+    const finish = (result: { success: boolean }) => {
+      if (settled) return
+      settled = true
+      resolve(result)
+    }
+
     const emit = (line: string, type: string) => {
       const sanitized = type === 'stdout' || type === 'stderr' ? sanitizeLog(line) : line
       mainWindow?.webContents.send('cmd:log', { line: sanitized, type })
@@ -298,18 +338,25 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
     const nameValidation = validateEnvironmentName(env.name)
     if (!nameValidation.valid) {
       emit(`✗ Invalid environment: ${nameValidation.error}`, 'error')
-      return resolve({ success: false })
+      return finish({ success: false })
     }
 
     if (!env.okta_org_url) {
       emit('✗ No Okta Org URL configured. Edit this environment and fill in the Okta Configuration section.', 'error')
-      return resolve({ success: false })
+      return finish({ success: false })
     }
 
-    const configPath = path.join(os.homedir(), '.okta_aws_login_config')
-    const section = buildProfileSection(env)
-    const original = injectProfile(configPath, env.name, section)
-    emit(`✎ Injected [${env.name}] into ${configPath}`, 'stdout')
+    let configPath: string
+    let original: string | null
+    try {
+      configPath = path.join(os.homedir(), '.okta_aws_login_config')
+      const section = buildProfileSection(env)
+      original = injectProfile(configPath, env.name, section)
+      emit(`✎ Injected [${env.name}] into ${configPath}`, 'stdout')
+    } catch (err: any) {
+      emit(`✗ Could not update Okta config file: ${err?.message ?? err}`, 'error')
+      return finish({ success: false })
+    }
 
     // On Windows, gimme-aws-creds is typically not on PATH — invoke via Python directly.
     // On Mac/Linux, use a login shell so PATH includes Homebrew/pyenv/pip install locations.
@@ -321,15 +368,25 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
     if (isWindows) emit('ℹ Running via Python on Windows', 'stdout')
     emit(`\n$ ${oktaCmd}`, 'cmd')
 
-    // Use a login shell on Mac/Linux so the full user PATH (Homebrew, pip, pyenv, etc.) is available.
-    // Electron GUI apps do not inherit the shell PATH set in ~/.zshrc / ~/.bashrc.
-    // SECURITY: Only pass safe environment variables to child process
-    const spawnCmd = isWindows ? oktaCmd : `bash -l 2>/dev/null -c ${JSON.stringify(oktaCmd)}`
+    // Use the user's login shell (zsh on modern macOS) so ~/.zshrc Homebrew PATH is applied.
+    // SECURITY: Only pass a minimal, augmented env to the child process
+    const spawnCmd = isWindows ? oktaCmd : wrapUnixLoginShell(oktaCmd)
     const okta = spawn(spawnCmd, [], { shell: true, env: getSafeEnv() })
     okta.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
     okta.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
 
+    // If spawn fails, Node emits 'error' and may not emit 'close' — IPC must still resolve or the UI stays stuck on "Connecting".
+    okta.on('error', (err) => {
+      restoreConfig(configPath, original)
+      const msg = err && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT'
+        ? 'Could not run shell or gimme-aws-creds (not found on PATH). Open a terminal and ensure `gimme-aws-creds` works, or fix your login shell.'
+        : (err as Error).message
+      emit(`✗ ${msg}`, 'error')
+      finish({ success: false })
+    })
+
     okta.on('close', (code) => {
+      if (settled) return
       // Always restore the original config file regardless of outcome
       restoreConfig(configPath, original)
 
@@ -338,7 +395,7 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
           emit('ℹ If Python was not found, ensure Python is on your PATH or install gimme-aws-creds via pip', 'stderr')
         }
         emit(`\n✗ gimme-aws-creds failed (exit ${code})`, 'error')
-        return resolve({ success: false })
+        return finish({ success: false })
       }
 
       emit('✓ AWS credentials obtained', 'success')
@@ -347,22 +404,32 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
       const cmdValidation = validateCommand(env.eks_command)
       if (!cmdValidation.valid) {
         emit(`✗ Invalid EKS command: ${cmdValidation.error}`, 'error')
-        return resolve({ success: false })
+        return finish({ success: false })
       }
       
       emit(`\n$ ${env.eks_command}`, 'cmd')
 
-      const eksSpawnCmd = isWindows ? env.eks_command : `bash -l 2>/dev/null -c ${JSON.stringify(env.eks_command)}`
+      const eksSpawnCmd = isWindows ? env.eks_command : wrapUnixLoginShell(env.eks_command)
       const eks = spawn(eksSpawnCmd, [], { shell: true, env: getSafeEnv() })
       eks.stdout.on('data', d => emit(d.toString().trimEnd(), 'stdout'))
       eks.stderr.on('data', d => emit(d.toString().trimEnd(), 'stderr'))
+
+      eks.on('error', (err) => {
+        const msg = err && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT'
+          ? 'Could not run shell or aws/kubectl (not found on PATH).'
+          : (err as Error).message
+        emit(`✗ ${msg}`, 'error')
+        finish({ success: false })
+      })
+
       eks.on('close', (eksCode) => {
+        if (settled) return
         if (eksCode === 0) {
           emit('\n✓ kubeconfig updated successfully', 'success')
-          resolve({ success: true })
+          finish({ success: true })
         } else {
           emit(`\n✗ eks update-kubeconfig failed (exit ${eksCode})`, 'error')
-          resolve({ success: false })
+          finish({ success: false })
         }
       })
     })

@@ -44,6 +44,9 @@
     "appId": "com.devops.eks-launcher",
     "productName": "EKS Launcher",
     "asar": true,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
+    ],
     "directories": {
       "output": "release",
       "buildResources": "build"

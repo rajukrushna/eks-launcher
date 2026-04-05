@@ -91,6 +91,10 @@ declare global {
         onLog: (cb: (data: { id: number; line: string; type: string }) => void) => () => void
         onStatusChange: (cb: (data: { id: number; status: string }) => void) => () => void
       }
+      data: {
+        export: () => Promise<{ success: boolean; filePath?: string; error?: string }>
+        import: () => Promise<{ success: boolean; imported?: { envCount: number; pfCount: number }; error?: string }>
+      }
     }
   }
 }
