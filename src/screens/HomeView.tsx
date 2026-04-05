@@ -1,10 +1,10 @@
 import React from 'react'
-import { Play, Server, Key, Globe, Terminal, CheckCircle, XCircle, Loader, Network, Download, Upload } from 'lucide-react'
+import { Play, Unplug, Server, Key, Globe, Terminal, CheckCircle, XCircle, Loader, Network, Download, Upload } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { LogEntry } from '../types'
 
 export default function HomeView() {
-  const { selectedEnv, connectedEnvId, lastAttemptedEnvId, runStatus, setRunStatus, setLastAttemptedEnvId, logs, appendLog, clearLogs, mainTab, setMainTab, runStatus: rs, setEnvironments, setPortForwards } = useStore()
+  const { selectedEnv, connectedEnvId, lastAttemptedEnvId, runStatus, setRunStatus, setLastAttemptedEnvId, setConnectedEnvId, logs, appendLog, clearLogs, mainTab, setMainTab, setEnvironments, setPortForwards } = useStore()
   const [exporting, setExporting] = React.useState(false)
   const [importing, setImporting] = React.useState(false)
   const logRef = React.useRef<HTMLDivElement>(null)
@@ -20,8 +20,14 @@ export default function HomeView() {
     return unsub
   }, [])
 
+  const handleDisconnect = () => {
+    if (!selectedEnv || connectedEnvId !== selectedEnv.id) return
+    setConnectedEnvId(null)
+    setRunStatus('idle')
+  }
+
   const handleRun = async () => {
-    if (!selectedEnv || runStatus === 'running') return
+    if (!selectedEnv || runStatus === 'running' || connectedEnvId === selectedEnv.id) return
     clearLogs()
     setLastAttemptedEnvId(selectedEnv.id)
     setRunStatus('running')
@@ -29,8 +35,14 @@ export default function HomeView() {
     const result = await window.api.cmd.run(selectedEnv)
     setRunStatus(result.success ? 'success' : 'error')
     if (result.success) {
-      useStore.setState({ connectedEnvId: selectedEnv.id })
+      setConnectedEnvId(selectedEnv.id)
     }
+  }
+
+  const handleConnectOrDisconnect = () => {
+    if (runStatus === 'running') return
+    if (selectedEnv && connectedEnvId === selectedEnv.id) handleDisconnect()
+    else void handleRun()
   }
 
   const handleExport = async () => {
@@ -57,7 +69,7 @@ export default function HomeView() {
         const pfs = await window.api.pf.list()
         setEnvironments(envs)
         setPortForwards(pfs)
-        alert(`Import successful! Added ${result.imported.envCount} environments and ${result.imported.pfCount} port-forwards.`)
+        alert(`Import successful! Added ${result.imported?.envCount ?? 0} environments and ${result.imported?.pfCount ?? 0} port-forwards.`)
       } else {
         alert(`Import failed: ${result.error}`)
       }
@@ -144,11 +156,39 @@ export default function HomeView() {
               )}
             </div>
           </div>
-          <button onClick={handleRun} disabled={runStatus === 'running'}
+          <button
+            type="button"
+            onClick={handleConnectOrDisconnect}
+            disabled={runStatus === 'running'}
             onMouseEnter={e => { if (runStatus !== 'running') e.currentTarget.style.transform = 'translateY(-1px)' }}
             onMouseLeave={e => { e.currentTarget.style.transform = 'none' }}
-            style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '9px 20px', background: runStatus === 'running' ? 'var(--bg-elevated)' : 'var(--accent-green)', color: runStatus === 'running' ? 'var(--text-muted)' : '#0d0f12', border: 'none', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 12, cursor: runStatus === 'running' ? 'not-allowed' : 'pointer', transition: 'transform 0.1s', letterSpacing: '0.04em', flexShrink: 0, boxShadow: runStatus === 'running' ? 'none' : '0 0 18px rgba(57,217,138,0.22)' }}>
-            {runStatus === 'running' ? <><Loader size={13} style={{ animation: 'spin 1s linear infinite' }} /> Connecting</> : <><Play size={13} fill="currentColor" /> Connect</>}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: '9px 20px',
+              border: 'none',
+              borderRadius: 4,
+              fontFamily: 'var(--font-mono)',
+              fontWeight: 600,
+              fontSize: 12,
+              letterSpacing: '0.04em',
+              flexShrink: 0,
+              transition: 'transform 0.1s',
+              ...(runStatus === 'running'
+                ? { background: 'var(--bg-elevated)', color: 'var(--text-muted)', cursor: 'not-allowed', boxShadow: 'none' }
+                : connectedEnvId === selectedEnv.id
+                  ? { background: 'var(--accent-amber)', color: '#0d0f12', cursor: 'pointer', boxShadow: '0 0 18px rgba(245, 166, 35, 0.28)' }
+                  : { background: 'var(--accent-green)', color: '#0d0f12', cursor: 'pointer', boxShadow: '0 0 18px rgba(57, 217, 138, 0.22)' }),
+            }}
+          >
+            {runStatus === 'running' ? (
+              <><Loader size={13} style={{ animation: 'spin 1s linear infinite' }} /> Connecting</>
+            ) : connectedEnvId === selectedEnv.id ? (
+              <><Unplug size={13} strokeWidth={2.5} /> Disconnect</>
+            ) : (
+              <><Play size={13} fill="currentColor" /> Connect</>
+            )}
           </button>
         </div>
         <div style={{ display: 'flex', gap: 20, marginTop: 14, flexWrap: 'wrap' }}>
