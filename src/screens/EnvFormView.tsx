@@ -28,6 +28,7 @@ const EMPTY_FORM: EnvironmentFormData = {
   aws_region:           'ca-central-1',
   aws_profile:          '',
   eks_command:          '',
+  execute_eks_command:  true,
 }
 
 export default function EnvFormView() {
@@ -37,7 +38,7 @@ export default function EnvFormView() {
   const isDuplicate = view === 'create' && !!editingEnv
 
   const [form, setForm] = React.useState<EnvironmentFormData>(
-    editingEnv ? { ...EMPTY_FORM, ...editingEnv } : { ...EMPTY_FORM }
+    editingEnv ? { ...EMPTY_FORM, ...editingEnv, execute_eks_command: !!editingEnv.execute_eks_command } : { ...EMPTY_FORM }
   )
   const [saving, setSaving] = React.useState(false)
   const [errors, setErrors] = React.useState<Partial<Record<keyof EnvironmentFormData, string>>>({})
@@ -117,7 +118,7 @@ enable_keychain = True`
     return updated
   }
 
-  const handleChange = (field: keyof EnvironmentFormData, value: string | number) => {
+  const handleChange = (field: keyof EnvironmentFormData, value: string | number | boolean) => {
     let finalValue = value
     // Remove spaces from name field
     if (field === 'name' && typeof value === 'string') {
@@ -139,7 +140,7 @@ enable_keychain = True`
     if (form.name.includes(' '))  e.name = 'Spaces not allowed (use hyphens instead)'
     if (!form.okta_profile.trim()) e.okta_profile = 'Required'
     if (!form.okta_org_url.trim()) e.okta_org_url = 'Required'
-    if (!form.eks_command.trim()) e.eks_command = 'Required'
+    if (form.execute_eks_command && !form.eks_command.trim()) e.eks_command = 'Required (or disable EKS command execution)'
     return e
   }
 
@@ -284,7 +285,7 @@ enable_keychain = True`
           </Section>
 
           {/* ── AWS & EKS ── */}
-          <Section title="AWS & EKS" subtitle="Cluster name, region, and IAM profile for kubeconfig">
+          <Section title="AWS & EKS" subtitle={form.execute_eks_command ? "Cluster name, region, and IAM profile for kubeconfig" : "Optional — only needed if EKS command execution is enabled"}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
               <Field label="EKS Cluster Name">
                 <Input value={form.eks_cluster_name} onChange={v => handleChange('eks_cluster_name', v)} placeholder="e.g. vcloud-prod-eks" />
@@ -299,13 +300,24 @@ enable_keychain = True`
           </Section>
 
           {/* ── EKS Command ── */}
-          <Section title="EKS Command" subtitle="Run after Okta auth to update kubeconfig"
+          <Section title="EKS Command" subtitle={form.execute_eks_command ? "Run after Okta auth to update kubeconfig" : "Optional — disabled"}
             action={
               <button onClick={() => { handleChange('eks_command', buildEksCmd(form)); setAutoGenCmd(true) }}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--accent-green-dim)', border: '1px solid var(--accent-green)', color: 'var(--accent-green)', borderRadius: 3, padding: '3px 9px', fontSize: 10, fontFamily: 'var(--font-mono)', cursor: 'pointer' }}>
+                style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--accent-green-dim)', border: '1px solid var(--accent-green)', color: 'var(--accent-green)', borderRadius: 3, padding: '3px 9px', fontSize: 10, fontFamily: 'var(--font-mono)', cursor: 'pointer', ...(form.execute_eks_command ? {} : { opacity: 0.5, cursor: 'not-allowed', pointerEvents: 'none' }) }}>
                 <Zap size={10} /> Auto-generate
               </button>
             }>
+            <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input 
+                type="checkbox" 
+                checked={form.execute_eks_command} 
+                onChange={e => handleChange('execute_eks_command', e.target.checked)}
+                style={{ cursor: 'pointer', width: 16, height: 16, accentColor: 'var(--accent-green)' }}
+              />
+              <label style={{ fontSize: 12, color: 'var(--text-primary)', cursor: 'pointer', userSelect: 'none' }}>
+                Execute EKS command after authentication
+              </label>
+            </div>
             {autoGenCmd && <div style={{ fontSize: 10, color: 'var(--accent-green)', marginBottom: 7, display: 'flex', alignItems: 'center', gap: 4 }}><Zap size={10} /> Generated from cluster / region / profile above</div>}
             <Field label="" error={errors.eks_command}>
               <textarea value={form.eks_command} onChange={e => { 

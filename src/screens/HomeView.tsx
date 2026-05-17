@@ -1,5 +1,5 @@
 import React from 'react'
-import { Play, Server, Key, Globe, Terminal, CheckCircle, XCircle, Loader, Network, Download, Upload } from 'lucide-react'
+import { Play, Server, Key, Globe, Terminal, CheckCircle, XCircle, Loader, Network, Download, Upload, Trash2 } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import type { LogEntry } from '../types'
 
@@ -7,6 +7,7 @@ export default function HomeView() {
   const { selectedEnv, connectedEnvId, lastAttemptedEnvId, runStatus, setRunStatus, setLastAttemptedEnvId, logs, appendLog, clearLogs, mainTab, setMainTab, runStatus: rs, setEnvironments, setPortForwards } = useStore()
   const [exporting, setExporting] = React.useState(false)
   const [importing, setImporting] = React.useState(false)
+  const [resetting, setResetting] = React.useState(false)
   const logRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
@@ -66,6 +67,30 @@ export default function HomeView() {
     }
   }
 
+  const handleReset = async () => {
+    if (!confirm('⚠️ Warning: This will delete ALL environments, port-forwards, and settings. This action cannot be undone. Are you sure?')) {
+      return
+    }
+    
+    setResetting(true)
+    try {
+      const result = await window.api.data.reset()
+      if (result.success) {
+        // Refresh the data
+        const envs = await window.api.env.list()
+        const pfs = await window.api.pf.list()
+        setEnvironments(envs)
+        setPortForwards(pfs)
+        useStore.setState({ selectedEnv: null, connectedEnvId: null, lastAttemptedEnvId: null })
+        alert('Database reset successfully. All data has been cleared.')
+      } else {
+        alert(`Reset failed: ${result.error}`)
+      }
+    } finally {
+      setResetting(false)
+    }
+  }
+
   const logColor = (type: string) => {
     switch (type) {
       case 'cmd': return 'var(--accent-amber)'
@@ -100,6 +125,12 @@ export default function HomeView() {
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-amber)', borderRadius: 4, background: 'transparent', color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: importing ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: importing ? 0.5 : 1 }}>
             <Upload size={11} /> Import
           </button>
+          <button onClick={handleReset} disabled={resetting}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-red)'; e.currentTarget.style.color = '#0d0f12' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent-red)' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-red)', borderRadius: 4, background: 'transparent', color: 'var(--accent-red)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: resetting ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: resetting ? 0.5 : 1 }}>
+            <Trash2 size={11} /> Reset
+          </button>
         </div>
         <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, color: 'var(--text-muted)' }}>
           <div style={{ width: 60, height: 60, borderRadius: 14, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -129,6 +160,12 @@ export default function HomeView() {
           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent-amber)' }}
           style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-amber)', borderRadius: 4, background: 'transparent', color: 'var(--accent-amber)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: importing ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: importing ? 0.5 : 1 }}>
           <Upload size={11} /> Import
+        </button>
+        <button onClick={handleReset} disabled={resetting}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--accent-red)'; e.currentTarget.style.color = '#0d0f12' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--accent-red)' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid var(--accent-red)', borderRadius: 4, background: 'transparent', color: 'var(--accent-red)', fontFamily: 'var(--font-mono)', fontSize: 11, cursor: resetting ? 'not-allowed' : 'pointer', transition: 'all 0.15s', fontWeight: 600, opacity: resetting ? 0.5 : 1 }}>
+          <Trash2 size={11} /> Reset
         </button>
       </div>
       <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid var(--border)', background: 'var(--bg-panel)', flexShrink: 0 }}>

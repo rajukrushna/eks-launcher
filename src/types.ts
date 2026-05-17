@@ -18,6 +18,7 @@ export interface Environment {
   aws_region: string
   aws_profile: string
   eks_command: string
+  execute_eks_command: boolean
   created_at: string
   updated_at: string
 }
@@ -90,6 +91,11 @@ declare global {
         stopAll: () => Promise<{ success: boolean }>
         onLog: (cb: (data: { id: number; line: string; type: string }) => void) => () => void
         onStatusChange: (cb: (data: { id: number; status: string }) => void) => () => void
+      }
+      data: {
+        export: () => Promise<{ success: boolean; filePath?: string; error?: string }>
+        import: () => Promise<{ success: boolean; imported?: { envCount: number; pfCount: number }; error?: string }>
+        reset: () => Promise<{ success: boolean; error?: string }>
       }
     }
   }

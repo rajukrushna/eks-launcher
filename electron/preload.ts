@@ -51,5 +51,6 @@ contextBridge.exposeInMainWorld('api', {
   data: {
     export: () => ipcRenderer.invoke('data:export'),
     import: () => ipcRenderer.invoke('data:import'),
+    reset: () => ipcRenderer.invoke('data:reset'),
   },
 })

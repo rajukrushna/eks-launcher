@@ -14,7 +14,7 @@ const pfProcesses = new Map<number, ChildProcess>()
 // ─── Database ─────────────────────────────────────────────────────────────────
 
 function initDb(): Database.Database {
-  const dbPath = join(app.getPath('userData'), 'eks-launcher.db')
+  const dbPath = join(app.getPath('userData'), 'eks-launcher-v1.db')
   const database = new Database(dbPath)
 
   database.exec(`
@@ -38,6 +38,7 @@ function initDb(): Database.Database {
       aws_region            TEXT NOT NULL DEFAULT 'ca-central-1',
       aws_profile           TEXT NOT NULL DEFAULT '',
       eks_command           TEXT NOT NULL DEFAULT '',
+      execute_eks_command   INTEGER NOT NULL DEFAULT 1,
       created_at            TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -76,6 +77,7 @@ function initDb(): Database.Database {
     app_url:              "TEXT NOT NULL DEFAULT ''",
     preferred_mfa_type:   "TEXT NOT NULL DEFAULT 'push'",
     aws_default_duration: "INTEGER NOT NULL DEFAULT 3600",
+    execute_eks_command:  "INTEGER NOT NULL DEFAULT 1",
   }
   for (const [col, def] of Object.entries(newCols)) {
     if (!cols.includes(col)) {
@@ -140,21 +142,24 @@ ipcMain.handle('env:create', (_e, data: any) => {
   const nameValidation = validateEnvironmentName(data.name)
   if (!nameValidation.valid) throw new Error(nameValidation.error)
   
+  // Convert boolean to integer for SQLite
+  const normalizedData = { ...data, execute_eks_command: data.execute_eks_command ? 1 : 0 }
+  
   const r = db!.prepare(`
     INSERT INTO environments (
       name, okta_profile,
       okta_org_url, okta_auth_server, client_id, gimme_creds_server,
       aws_appname, aws_rolename, okta_username, app_url,
       preferred_mfa_type, aws_default_duration,
-      eks_cluster_name, aws_region, aws_profile, eks_command
+      eks_cluster_name, aws_region, aws_profile, eks_command, execute_eks_command
     ) VALUES (
       @name, @okta_profile,
       @okta_org_url, @okta_auth_server, @client_id, @gimme_creds_server,
       @aws_appname, @aws_rolename, @okta_username, @app_url,
       @preferred_mfa_type, @aws_default_duration,
-      @eks_cluster_name, @aws_region, @aws_profile, @eks_command
+      @eks_cluster_name, @aws_region, @aws_profile, @eks_command, @execute_eks_command
     )
-  `).run(data)
+  `).run(normalizedData)
   return db!.prepare('SELECT * FROM environments WHERE id = ?').get(r.lastInsertRowid)
 })
 
@@ -162,6 +167,9 @@ ipcMain.handle('env:update', (_e, id: number, data: any) => {
   // SECURITY: Validate input before updating
   const nameValidation = validateEnvironmentName(data.name)
   if (!nameValidation.valid) throw new Error(nameValidation.error)
+  
+  // Convert boolean to integer for SQLite
+  const normalizedData = { ...data, id, execute_eks_command: data.execute_eks_command ? 1 : 0 }
   
   db!.prepare(`
     UPDATE environments SET
@@ -172,9 +180,9 @@ ipcMain.handle('env:update', (_e, id: number, data: any) => {
       okta_username=@okta_username, app_url=@app_url,
       preferred_mfa_type=@preferred_mfa_type, aws_default_duration=@aws_default_duration,
       eks_cluster_name=@eks_cluster_name, aws_region=@aws_region,
-      aws_profile=@aws_profile, eks_command=@eks_command
+      aws_profile=@aws_profile, eks_command=@eks_command, execute_eks_command=@execute_eks_command
     WHERE id=@id
-  `).run({ ...data, id })
+  `).run(normalizedData)
   return db!.prepare('SELECT * FROM environments WHERE id = ?').get(id)
 })
 
@@ -342,6 +350,13 @@ ipcMain.handle('cmd:run', (_e, env: any) => {
       }
 
       emit('✓ AWS credentials obtained', 'success')
+      
+      // Check if user wants to execute EKS command
+      if (!env.execute_eks_command) {
+        emit('\n⊘ EKS command execution disabled', 'stdout')
+        resolve({ success: true })
+        return
+      }
       
       // Validate EKS command before execution
       const cmdValidation = validateCommand(env.eks_command)
@@ -522,20 +537,22 @@ ipcMain.handle('data:import', async () => {
       if (!nameValidation.valid) continue // Skip invalid entries
       
       const { id, created_at, updated_at, ...envData } = env
+      // Convert boolean to integer for SQLite
+      const normalizedEnv = { ...envData, execute_eks_command: envData.execute_eks_command ? 1 : 0 }
       try {
         db!.prepare(`
           INSERT INTO environments (
             name, okta_profile, okta_org_url, okta_auth_server, client_id,
             gimme_creds_server, aws_appname, aws_rolename, okta_username, app_url,
             preferred_mfa_type, aws_default_duration, eks_cluster_name, aws_region,
-            aws_profile, eks_command
+            aws_profile, eks_command, execute_eks_command
           ) VALUES (
             @name, @okta_profile, @okta_org_url, @okta_auth_server, @client_id,
             @gimme_creds_server, @aws_appname, @aws_rolename, @okta_username, @app_url,
             @preferred_mfa_type, @aws_default_duration, @eks_cluster_name, @aws_region,
-            @aws_profile, @eks_command
+            @aws_profile, @eks_command, @execute_eks_command
           )
-        `).run(envData)
+        `).run(normalizedEnv)
         importedEnvs++
       } catch (e) {
         // Skip if environment already exists
@@ -567,5 +584,34 @@ ipcMain.handle('data:import', async () => {
     return { success: true, imported: { envCount: importedEnvs, pfCount: importedPfs } }
   } catch (err: any) {
     return { success: false, error: 'Failed to import backup file' }
+  }
+})
+
+// ─── Reset Database ──────────────────────────────────────────────────────────
+
+ipcMain.handle('data:reset', () => {
+  try {
+    // Close all port-forward processes
+    pfProcesses.forEach(p => p.kill())
+    pfProcesses.clear()
+
+    // Close the database
+    if (db) {
+      db.close()
+      db = null
+    }
+
+    // Delete the database file
+    const dbPath = path.join(app.getPath('userData'), 'eks-launcher.db')
+    if (fs.existsSync(dbPath)) {
+      fs.unlinkSync(dbPath)
+    }
+
+    // Reinitialize the database with fresh tables
+    db = initDb()
+
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
   }
 })
