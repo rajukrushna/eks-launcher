@@ -209,7 +209,7 @@ export default function HomeView() {
       {/* Tab: Connect — EKS command + terminal */}
       {mainTab === 'connect' && (
         <>
-          {selectedEnv.id !== connectedEnvId && runStatus !== 'running' ? (
+          {selectedEnv.id !== connectedEnvId && !(lastAttemptedEnvId === selectedEnv.id && (runStatus === 'running' || runStatus === 'error')) ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, color: 'var(--text-muted)' }}>
               <div style={{ width: 56, height: 56, borderRadius: 14, border: '1px dashed var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Terminal size={24} strokeWidth={1} />
